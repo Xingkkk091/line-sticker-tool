@@ -102,7 +102,7 @@ uploaded = st.file_uploader(
 
 if uploaded:
     image = Image.open(uploaded).convert("RGBA")
-    st.image(image, caption=f"原始圖片 {image.width}×{image.height}", use_container_width=True)
+    st.image(image, caption=f"原始圖片 {image.width}×{image.height}", width="stretch")
 
     # 決定格狀
     if grid_mode == "自動偵測":
@@ -113,7 +113,7 @@ if uploaded:
 
     total = cols * rows
 
-    if st.button(f"🚀 開始處理（{total} 張貼圖）", type="primary", use_container_width=True):
+    if st.button(f"🚀 開始處理（{total} 張貼圖）", type="primary"):
         cells = slice_grid(image, cols, rows)
 
         progress = st.progress(0, text="準備中...")
@@ -150,7 +150,7 @@ if uploaded:
                         arr[ty:ty+tile, tx:tx+tile] = color
                 checker = Image.fromarray(arr)
                 checker.paste(img, mask=img.split()[3])
-                st.image(checker, caption=f"#{i+1:02d}", use_container_width=True)
+                st.image(checker, caption=f"#{i+1:02d}", width="stretch")
 
         # 打包 ZIP 下載
         zip_buf = io.BytesIO()
@@ -163,6 +163,5 @@ if uploaded:
             data=zip_buf.getvalue(),
             file_name="line_stickers.zip",
             mime="application/zip",
-            use_container_width=True,
             type="primary",
         )
