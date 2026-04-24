@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+*.zip
+*.png
+*.jpg
+*.jpeg
+*.webp
+output/
+u2net/
+.u2net/
