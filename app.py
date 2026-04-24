@@ -24,7 +24,7 @@ with st.sidebar:
     st.subheader("去背模型")
     model_choice = st.radio(
         "選擇模型",
-        ["birefnet-general（最佳品質）", "isnet-general-use（次佳）", "u2net（快速）"],
+        ["u2net（雲端推薦）", "isnet-general-use（較佳品質）"],
         index=0,
     )
     model_name = model_choice.split("（")[0]
