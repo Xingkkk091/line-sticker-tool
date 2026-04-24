@@ -116,27 +116,23 @@ if uploaded:
     total = cols * rows
 
     if st.button(f"🚀 開始處理（{total} 張貼圖）", type="primary", disabled=not api_key):
-        cells = slice_grid(image, cols, rows)
-        progress = st.progress(0, text="準備中...")
+        progress = st.progress(0, text="整張去背中（1 次 API）...")
         status = st.empty()
-        results: list[Image.Image] = []
-        errors = []
 
-        for i, cell in enumerate(cells):
-            status.text(f"去背第 {i+1}/{total} 張...")
-            try:
-                result = remove_bg_api(cell, api_key)
-                result = fit_canvas(result, output_size)
-                results.append(result)
-            except Exception as e:
-                errors.append(f"#{i+1}: {e}")
-                results.append(fit_canvas(cell, output_size))
-            progress.progress((i + 1) / total, text=f"{i+1}/{total} 完成")
+        try:
+            # 整張排版圖去背（只用 1 次 API）
+            sheet_no_bg = remove_bg_api(image, api_key)
+            progress.progress(0.5, text="切割中...")
+        except Exception as e:
+            status.error(f"去背失敗：{e}")
+            st.stop()
 
-        if errors:
-            status.error("部分失敗：\n" + "\n".join(errors))
-        else:
-            status.success(f"✅ 全部完成！共 {total} 張")
+        # 切割已去背的整張圖
+        cells = slice_grid(sheet_no_bg, cols, rows)
+        results = [fit_canvas(cell, output_size) for cell in cells]
+
+        progress.progress(1.0, text="完成！")
+        status.success(f"✅ 全部完成！共 {total} 張（只用了 1 次 API）")
 
         st.markdown("### 預覽")
         preview_cols = st.columns(cols)
