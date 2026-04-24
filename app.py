@@ -1,9 +1,9 @@
 import io
 import zipfile
 import numpy as np
+import requests
 import streamlit as st
-from PIL import Image, ImageFilter
-from rembg import remove, new_session
+from PIL import Image
 
 st.set_page_config(page_title="LINE 貼圖自動化", page_icon="🐦", layout="wide")
 
@@ -21,16 +21,16 @@ with st.sidebar:
     output_size = st.slider("輸出尺寸（px）", 300, 600, 500, step=50)
 
     st.markdown("---")
-    st.subheader("去背模型")
-    model_choice = st.radio(
-        "選擇模型",
-        ["u2net（雲端推薦）", "isnet-general-use（較佳品質）"],
-        index=0,
+    st.subheader("🔑 remove.bg API Key")
+    api_key = st.text_input(
+        "API Key",
+        type="password",
+        placeholder="貼上你的 remove.bg API key",
+        help="免費申請：https://www.remove.bg/api",
     )
-    model_name = model_choice.split("（")[0]
-
-    edge_smooth = st.checkbox("邊緣平滑", value=True)
-    st.caption("首次使用會自動下載模型（birefnet 約 200MB）")
+    st.caption("免費帳號每月 50 張，品質極佳")
+    if not api_key:
+        st.warning("請輸入 API Key 才能使用去背功能")
 
 
 # ── 工具函數 ──────────────────────────────────────────────
@@ -56,21 +56,20 @@ def slice_grid(image: Image.Image, cols: int, rows: int) -> list[Image.Image]:
     ]
 
 
-def smooth_edges(image: Image.Image, radius: int = 1) -> Image.Image:
-    """讓 alpha 邊緣更銳利乾淨"""
-    r, g, b, a = image.split()
-    # 稍微侵蝕 alpha，去掉髒邊
-    a_arr = np.array(a, dtype=np.float32)
-    # 二值化：半透明的邊界推向完全透明或完全不透明
-    a_arr = np.where(a_arr > 200, 255, np.where(a_arr < 50, 0, a_arr))
-    a_clean = Image.fromarray(a_arr.astype(np.uint8))
-    if radius > 0:
-        a_clean = a_clean.filter(ImageFilter.GaussianBlur(radius=radius))
-        # 再次二值化避免模糊造成半透明鬼影
-        a_arr2 = np.array(a_clean, dtype=np.float32)
-        a_arr2 = np.where(a_arr2 > 128, 255, 0)
-        a_clean = Image.fromarray(a_arr2.astype(np.uint8))
-    return Image.merge("RGBA", (r, g, b, a_clean))
+def remove_bg_api(image: Image.Image, key: str) -> Image.Image:
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    buf.seek(0)
+    resp = requests.post(
+        "https://api.remove.bg/v1.0/removebg",
+        files={"image_file": ("image.png", buf, "image/png")},
+        data={"size": "auto"},
+        headers={"X-Api-Key": key},
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"remove.bg 錯誤：{resp.status_code} {resp.text[:200]}")
+    return Image.open(io.BytesIO(resp.content)).convert("RGBA")
 
 
 def fit_canvas(image: Image.Image, size: int) -> Image.Image:
@@ -88,9 +87,13 @@ def to_png_bytes(image: Image.Image) -> bytes:
     return buf.getvalue()
 
 
-@st.cache_resource(show_spinner="載入去背模型中...")
-def load_session(name: str):
-    return new_session(name)
+def make_checker(size: int) -> Image.Image:
+    tile = 20
+    arr = np.zeros((size, size, 3), dtype=np.uint8)
+    for ty in range(0, size, tile):
+        for tx in range(0, size, tile):
+            arr[ty:ty+tile, tx:tx+tile] = 200 if (tx // tile + ty // tile) % 2 == 0 else 160
+    return Image.fromarray(arr)
 
 
 # ── 主介面 ────────────────────────────────────────────────
@@ -104,7 +107,6 @@ if uploaded:
     image = Image.open(uploaded).convert("RGBA")
     st.image(image, caption=f"原始圖片 {image.width}×{image.height}", width="stretch")
 
-    # 決定格狀
     if grid_mode == "自動偵測":
         cols, rows = detect_grid(image)
         st.info(f"自動偵測：**{cols}×{rows}（{cols * rows} 張）**")
@@ -113,46 +115,37 @@ if uploaded:
 
     total = cols * rows
 
-    if st.button(f"🚀 開始處理（{total} 張貼圖）", type="primary"):
+    if st.button(f"🚀 開始處理（{total} 張貼圖）", type="primary", disabled=not api_key):
         cells = slice_grid(image, cols, rows)
-
         progress = st.progress(0, text="準備中...")
         status = st.empty()
-
-        session = load_session(model_name)
         results: list[Image.Image] = []
+        errors = []
 
         for i, cell in enumerate(cells):
-            status.text(f"處理第 {i+1}/{total} 張...")
-            raw = to_png_bytes(cell)
-            out_bytes = remove(raw, session=session)
-            result = Image.open(io.BytesIO(out_bytes)).convert("RGBA")
-            if edge_smooth:
-                result = smooth_edges(result)
-            result = fit_canvas(result, output_size)
-            results.append(result)
+            status.text(f"去背第 {i+1}/{total} 張...")
+            try:
+                result = remove_bg_api(cell, api_key)
+                result = fit_canvas(result, output_size)
+                results.append(result)
+            except Exception as e:
+                errors.append(f"#{i+1}: {e}")
+                results.append(fit_canvas(cell, output_size))
             progress.progress((i + 1) / total, text=f"{i+1}/{total} 完成")
 
-        status.success(f"✅ 全部完成！共 {total} 張")
+        if errors:
+            status.error("部分失敗：\n" + "\n".join(errors))
+        else:
+            status.success(f"✅ 全部完成！共 {total} 張")
 
-        # 預覽（棋盤格背景，更專業）
         st.markdown("### 預覽")
         preview_cols = st.columns(cols)
         for i, img in enumerate(results):
             with preview_cols[i % cols]:
-                # 棋盤格背景方便辨識透明度
-                checker = Image.new("RGB", (output_size, output_size))
-                tile = 20
-                arr = np.zeros((output_size, output_size, 3), dtype=np.uint8)
-                for ty in range(0, output_size, tile):
-                    for tx in range(0, output_size, tile):
-                        color = 200 if (tx // tile + ty // tile) % 2 == 0 else 160
-                        arr[ty:ty+tile, tx:tx+tile] = color
-                checker = Image.fromarray(arr)
+                checker = make_checker(output_size)
                 checker.paste(img, mask=img.split()[3])
                 st.image(checker, caption=f"#{i+1:02d}", width="stretch")
 
-        # 打包 ZIP 下載
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for i, img in enumerate(results):
